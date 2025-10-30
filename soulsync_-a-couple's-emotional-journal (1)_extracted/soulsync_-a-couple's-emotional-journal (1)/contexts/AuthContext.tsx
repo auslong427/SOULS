@@ -31,6 +31,8 @@ const GOOGLE_TASKS_SCOPES = 'https://www.googleapis.com/auth/tasks';
 
 const ENV_DEFAULT_CALENDAR_ID = import.meta.env.VITE_GOOGLE_CALENDAR_ID;
 const CALENDAR_STORAGE_KEY = 'soulsync.selectedCalendarId';
+const TOKEN_STORAGE_KEY = 'soulsync.googleToken';
+const TOKEN_EXPIRY_KEY = 'soulsync.googleTokenExpiry';
 
 const auth = getAuth(app);
 
@@ -156,6 +158,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [pendingGoogleAccessToken, setPendingGoogleAccessToken] = useState<string | null>(null);
   const [gsiLoading, setGsiLoading] = useState<boolean>(false);
   const [lastCalendarSyncAt, setLastCalendarSyncAt] = useState<number | null>(null);
+  const [gapiLoaded, setGapiLoaded] = useState(false);
   const resolveInitialCalendarId = () => {
     if (typeof window !== 'undefined') {
       const stored = window.localStorage.getItem(CALENDAR_STORAGE_KEY);
@@ -171,6 +174,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const selectCalendar = useCallback((id: string) => {
     setCalendarIdState(id);
+  }, []);
+
+  // Token persistence helpers
+  const saveTokenToStorage = useCallback((token: string, expiresIn: number = 3600) => {
+    if (typeof window !== 'undefined') {
+      const expiryTime = Date.now() + (expiresIn * 1000);
+      window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      window.localStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
+    }
+  }, []);
+
+  const getTokenFromStorage = useCallback((): { token: string | null; isExpired: boolean } => {
+    if (typeof window === 'undefined') return { token: null, isExpired: true };
+    
+    const token = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+    const expiry = window.localStorage.getItem(TOKEN_EXPIRY_KEY);
+    
+    if (!token || !expiry) return { token: null, isExpired: true };
+    
+    const isExpired = Date.now() >= parseInt(expiry);
+    return { token, isExpired };
+  }, []);
+
+  const clearTokenFromStorage = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(TOKEN_EXPIRY_KEY);
+    }
   }, []);
 
   useEffect(() => {
@@ -201,52 +232,100 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Load GAPI client
   useEffect(() => {
+    // Check if script is already loaded
+    if (window.gapi?.client) {
+      setGapiLoaded(true);
+      setGapiClient(window.gapi);
+      return;
+    }
+
+    // Check if script is already in DOM
+    const existingScript = document.querySelector('script[src="https://apis.google.com/js/api.js"]');
+    if (existingScript) {
+      existingScript.addEventListener('load', () => {
+        if (window.gapi) {
+          initGapiClient();
+        }
+      });
+      return;
+    }
+
     const script = document.createElement('script');
     script.src = 'https://apis.google.com/js/api.js';
+    script.async = false; // Load synchronously to prevent race conditions
     script.onload = () => {
-      window.gapi.load('client', () => {
+      if (window.gapi) {
+        initGapiClient();
+      }
+    };
+    script.onerror = () => {
+      console.error('Failed to load Google API script');
+    };
+    document.body.appendChild(script);
+
+    function initGapiClient() {
+      window.gapi.load('client', async () => {
         if (!GOOGLE_CLIENT_ID) {
           console.error('VITE_GOOGLE_CLIENT_ID is not set. Google APIs will not be initialized.');
+          setGapiLoaded(true);
+          return;
         }
-        window.gapi.client.init({
-          clientId: GOOGLE_CLIENT_ID,
-          scope: `${GOOGLE_CALENDAR_SCOPES} ${GOOGLE_TASKS_SCOPES}`,
-          discoveryDocs: [
-            'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
-            'https://www.googleapis.com/discovery/v1/apis/tasks/v1/rest'
-        ],
-        }).then(() => {
+        
+        try {
+          await window.gapi.client.init({
+            clientId: GOOGLE_CLIENT_ID,
+            scope: `${GOOGLE_CALENDAR_SCOPES} ${GOOGLE_TASKS_SCOPES}`,
+            discoveryDocs: [
+              'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
+              'https://www.googleapis.com/discovery/v1/apis/tasks/v1/rest'
+            ],
+          });
+          
           setGapiClient(window.gapi);
-          // If a token already exists (from a prior session), mark connected and sync
-          try {
-            const existing = window.gapi.client.getToken ? window.gapi.client.getToken() : null;
-            if (existing?.access_token) {
+          setGapiLoaded(true);
+          
+          // Try to restore token from storage
+          const { token, isExpired } = getTokenFromStorage();
+          if (token && !isExpired) {
+            try {
+              window.gapi.client.setToken({ access_token: token });
               setIsGoogleCalendarConnected(true);
-              refreshCalendarList();
-              syncGoogleCalendarEvents();
+              await refreshCalendarList();
+              await syncGoogleCalendarEvents();
+            } catch (e) {
+              console.error('Failed to restore token from storage:', e);
+              clearTokenFromStorage();
             }
-          } catch {}
+          } else if (token && isExpired) {
+            // Token expired, clear it
+            clearTokenFromStorage();
+          }
+          
           // If user logged in before gapi loaded, apply pending token now
           if (pendingGoogleAccessToken) {
             try {
               window.gapi.client.setToken({ access_token: pendingGoogleAccessToken });
+              saveTokenToStorage(pendingGoogleAccessToken);
               setIsGoogleCalendarConnected(true);
-              refreshCalendarList();
-              syncGoogleCalendarEvents();
+              await refreshCalendarList();
+              await syncGoogleCalendarEvents();
             } catch (e) {
               console.error('Failed to set pending Google token', e);
             } finally {
               setPendingGoogleAccessToken(null);
             }
           }
-        });
+        } catch (error) {
+          console.error('Error initializing GAPI client:', error);
+          setGapiLoaded(true);
+        }
       });
-    };
-    document.body.appendChild(script);
-  }, [pendingGoogleAccessToken]);
+    }
+  }, [pendingGoogleAccessToken, getTokenFromStorage, clearTokenFromStorage, saveTokenToStorage]);
 
   const refreshCalendarList = useCallback(async () => {
-    if (!gapiClient) return;
+    if (!gapiClient || !gapiLoaded) return;
+    
     try {
       const response = await gapiClient.client.calendar.calendarList.list();
       const calendars: GoogleCalendarSummary[] = (response.result.items || []).map((item: any) => ({
@@ -273,11 +352,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           selectCalendar(fallback.id);
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to load calendar list', e);
-      setIsGoogleCalendarConnected(false);
+      const code = e?.result?.error?.code;
+      if (code === 401 || code === 403) {
+        console.warn('Authentication error when loading calendar list');
+        setIsGoogleCalendarConnected(false);
+        clearTokenFromStorage();
+      } else {
+        setIsGoogleCalendarConnected(false);
+      }
     }
-  }, [gapiClient, calendarId, selectCalendar]);
+  }, [gapiClient, gapiLoaded, calendarId, selectCalendar, clearTokenFromStorage]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -368,23 +454,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logIn = async () => {
     setLoading(true);
     const provider = new GoogleAuthProvider();
-  provider.addScope(GOOGLE_CALENDAR_SCOPES);
-  provider.addScope(GOOGLE_TASKS_SCOPES);
-  // Force consent so incremental scopes are granted even if already signed in
-  provider.setCustomParameters({ prompt: 'consent select_account', include_granted_scopes: 'true' as any });
+    provider.addScope(GOOGLE_CALENDAR_SCOPES);
+    provider.addScope(GOOGLE_TASKS_SCOPES);
+    // Force consent so incremental scopes are granted even if already signed in
+    provider.setCustomParameters({ prompt: 'consent select_account', include_granted_scopes: 'true' as any });
+    
     try {
       const result = auth.currentUser
         ? await reauthenticateWithPopup(auth.currentUser, provider)
         : await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
+      
       if (credential && credential.accessToken) {
-        if (gapiClient) {
+        saveTokenToStorage(credential.accessToken);
+        if (gapiClient && gapiLoaded) {
           gapiClient.client.setToken({ access_token: credential.accessToken });
           setIsGoogleCalendarConnected(true);
           await refreshCalendarList();
-          syncGoogleCalendarEvents();
-        }
-        else {
+          await syncGoogleCalendarEvents();
+        } else {
           // gapi client not ready yet; store token to apply when gapi loads
           setPendingGoogleAccessToken(credential.accessToken);
         }
@@ -405,11 +493,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             prompt: 'consent',
             callback: async (resp: any) => {
               if (resp?.access_token) {
-                if (gapiClient) {
+                const expiresIn = resp.expires_in || 3600;
+                saveTokenToStorage(resp.access_token, expiresIn);
+                if (gapiClient && gapiLoaded) {
                   gapiClient.client.setToken({ access_token: resp.access_token });
                   setIsGoogleCalendarConnected(true);
                   await refreshCalendarList();
-                  syncGoogleCalendarEvents();
+                  await syncGoogleCalendarEvents();
                 } else {
                   setPendingGoogleAccessToken(resp.access_token);
                 }
@@ -447,15 +537,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (gapiClient) {
       gapiClient.client.setToken(null);
     }
+    clearTokenFromStorage();
     setIsGoogleCalendarConnected(false);
     setEvents([]);
     setLastCalendarSyncAt(null);
   };
 
   const syncGoogleCalendarEvents = useCallback(async () => {
-    if (!gapiClient || !isGoogleCalendarConnected || !calendarId) return;
+    if (!gapiClient || !gapiLoaded || !isGoogleCalendarConnected || !calendarId) return;
+    
     setIsGoogleSyncing(true);
     try {
+      // Verify token is still valid
+      const { token, isExpired } = getTokenFromStorage();
+      if (!token || isExpired) {
+        console.warn('Token expired or missing, disconnecting...');
+        setIsGoogleCalendarConnected(false);
+        clearTokenFromStorage();
+        setIsGoogleSyncing(false);
+        return;
+      }
+
       const now = Date.now();
       const oneYear = 365 * 24 * 60 * 60 * 1000;
       const response = await gapiClient.client.calendar.events.list({
@@ -511,13 +613,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.error('Error syncing Google Calendar events:', error);
       const code = (error && typeof error === 'object' && 'result' in (error as any)) ? (error as any).result?.error?.code : undefined;
-      if (code === 401) {
+      if (code === 401 || code === 403) {
+        console.warn('Authentication error, clearing token and disconnecting');
         setIsGoogleCalendarConnected(false);
+        clearTokenFromStorage();
+        alert('Your Google Calendar session has expired. Please reconnect.');
       }
     } finally {
       setIsGoogleSyncing(false);
     }
-  }, [gapiClient, isGoogleCalendarConnected, calendarId]);
+  }, [gapiClient, gapiLoaded, isGoogleCalendarConnected, calendarId, getTokenFromStorage, clearTokenFromStorage]);
 
   const refreshCalendarNow = useCallback(async () => {
     await refreshCalendarList();
@@ -532,7 +637,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [isGoogleCalendarConnected, gapiClient, syncGoogleCalendarEvents]);
 
   const addTask = async (content: string, ownerName: 'Austin' | 'Angie' | 'Shared') => {
-    if (!user || !gapiClient || !isGoogleCalendarConnected) return;
+    if (!user || !gapiClient || !gapiLoaded || !isGoogleCalendarConnected) return;
 
     const task = { title: content };
 
@@ -544,8 +649,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     request.execute(async (googleTask: any) => {
       if (googleTask.error) {
         console.error('Error adding Google Task:', googleTask.error);
-        // Popup confirmation for error
-        alert('Failed to create Google Task. Please try again.');
+        const code = googleTask.error?.code;
+        if (code === 401 || code === 403) {
+          setIsGoogleCalendarConnected(false);
+          clearTokenFromStorage();
+          alert('Your Google session has expired. Please reconnect.');
+        } else {
+          alert('Failed to create Google Task. Please try again.');
+        }
         return;
       }
       const docRef = await addDoc(collection(db, 'users', user.uid, 'tasks'), {
@@ -567,7 +678,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const taskRef = doc(db, 'users', user.uid, 'tasks', taskId);
     await updateDoc(taskRef, updates);
 
-    if (gapiClient && isGoogleCalendarConnected) {
+    if (gapiClient && gapiLoaded && isGoogleCalendarConnected) {
         const taskDoc = await getDoc(taskRef);
         const taskData = taskDoc.data();
 
@@ -580,6 +691,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             request.execute((result: any) => {
                 if (result.error) {
                     console.error('Error updating Google Task:', result.error);
+                    const code = result.error?.code;
+                    if (code === 401 || code === 403) {
+                        setIsGoogleCalendarConnected(false);
+                        clearTokenFromStorage();
+                    }
                 }
             });
         }
@@ -590,7 +706,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return;
     const taskRef = doc(db, 'users', user.uid, 'tasks', taskId);
     
-    if (gapiClient && isGoogleCalendarConnected) {
+    if (gapiClient && gapiLoaded && isGoogleCalendarConnected) {
         const taskDoc = await getDoc(taskRef);
         const taskData = taskDoc.data();
 
@@ -602,6 +718,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             request.execute((result: any) => {
                 if (result.error) {
                     console.error('Error deleting Google Task:', result.error);
+                    const code = result.error?.code;
+                    if (code === 401 || code === 403) {
+                        setIsGoogleCalendarConnected(false);
+                        clearTokenFromStorage();
+                    }
                 }
             });
         }
@@ -641,7 +762,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addEvent = async (title: string, color: string, date: string, time?: string) => {
-    if (!user || !gapiClient || !isGoogleCalendarConnected || !calendarId) return;
+    if (!user || !gapiClient || !gapiLoaded || !isGoogleCalendarConnected || !calendarId) return;
 
     const resource: any = {
       summary: title,
@@ -673,7 +794,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     request.execute((result: any) => {
       if (result?.error) {
         console.error('Error creating Google Calendar event:', result.error);
-        alert('Failed to create Google Calendar event. Please try again.');
+        const code = result.error?.code;
+        if (code === 401 || code === 403) {
+          setIsGoogleCalendarConnected(false);
+          clearTokenFromStorage();
+          alert('Your Google Calendar session has expired. Please reconnect.');
+        } else {
+          alert('Failed to create Google Calendar event. Please try again.');
+        }
         return;
       }
       syncGoogleCalendarEvents();
@@ -682,7 +810,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateEvent = async (eventId: string, updates: Partial<Omit<CalendarEvent, 'id'>>) => {
-    if (!gapiClient || !isGoogleCalendarConnected || !calendarId) return;
+    if (!gapiClient || !gapiLoaded || !isGoogleCalendarConnected || !calendarId) return;
 
     try {
       const current = await gapiClient.client.calendar.events.get({ calendarId, eventId });
@@ -743,18 +871,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       request.execute((result: any) => {
         if (result?.error) {
           console.error('Error updating Google Calendar event:', result.error);
-          alert('Failed to update Google Calendar event.');
+          const code = result.error?.code;
+          if (code === 401 || code === 403) {
+            setIsGoogleCalendarConnected(false);
+            clearTokenFromStorage();
+            alert('Your Google Calendar session has expired. Please reconnect.');
+          } else {
+            alert('Failed to update Google Calendar event.');
+          }
           return;
         }
         syncGoogleCalendarEvents();
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching Google Calendar event before update:', error);
+      const code = error?.result?.error?.code;
+      if (code === 401 || code === 403) {
+        setIsGoogleCalendarConnected(false);
+        clearTokenFromStorage();
+        alert('Your Google Calendar session has expired. Please reconnect.');
+      }
     }
   };
 
   const deleteEvent = async (eventId: string) => {
-    if (!gapiClient || !isGoogleCalendarConnected || !calendarId) return;
+    if (!gapiClient || !gapiLoaded || !isGoogleCalendarConnected || !calendarId) return;
 
     const request = gapiClient.client.calendar.events.delete({
       calendarId,
@@ -764,7 +905,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     request.execute((result: any) => {
       if (result?.error) {
         console.error('Error deleting Google Calendar event:', result.error);
-        alert('Failed to delete Google Calendar event.');
+        const code = result.error?.code;
+        if (code === 401 || code === 403) {
+          setIsGoogleCalendarConnected(false);
+          clearTokenFromStorage();
+          alert('Your Google Calendar session has expired. Please reconnect.');
+        } else {
+          alert('Failed to delete Google Calendar event.');
+        }
         return;
       }
       syncGoogleCalendarEvents();
@@ -811,6 +959,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // GAPI doesn't have a revoke method, so we just clear the token.
       gapiClient.client.setToken(null);
     }
+    clearTokenFromStorage();
     setIsGoogleCalendarConnected(false);
     setAvailableCalendars([]);
     setEvents([]); // Clear calendar events from state

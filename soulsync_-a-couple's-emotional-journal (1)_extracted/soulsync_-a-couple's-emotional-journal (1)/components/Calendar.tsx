@@ -94,7 +94,7 @@ const AddEventModal: React.FC<{
 };
 
 const GoogleConnectButton: React.FC = () => {
-  const { isGoogleCalendarConnected, logIn, disconnectGoogleCalendar, isGoogleSyncing } = useAuth();
+  const { isGoogleCalendarConnected, logIn, disconnectGoogleCalendar, isGoogleSyncing, loading } = useAuth();
     
     if (isGoogleSyncing) {
         return (
@@ -107,16 +107,24 @@ const GoogleConnectButton: React.FC = () => {
 
     if (isGoogleCalendarConnected) {
         return (
-            <button onClick={disconnectGoogleCalendar} className="px-2 py-1 text-xs md:text-sm font-semibold text-red-600 bg-red-100 hover:bg-red-200 rounded-md">
+            <button 
+                onClick={disconnectGoogleCalendar} 
+                className="px-2 py-1 text-xs md:text-sm font-semibold text-red-600 bg-red-100 hover:bg-red-200 rounded-md transition-colors"
+                disabled={loading}
+            >
                 Disconnect
             </button>
         );
     }
     
     return (
-        <button onClick={logIn} className="flex items-center gap-2 px-2 py-1 text-xs md:text-sm font-semibold text-stone-700 bg-white hover:bg-stone-100 border border-stone-300 rounded-md transition-colors">
+        <button 
+            onClick={logIn} 
+            disabled={loading}
+            className="flex items-center gap-2 px-2 py-1 text-xs md:text-sm font-semibold text-stone-700 bg-white hover:bg-stone-100 border border-stone-300 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
             <GoogleIcon className="w-4 h-4" />
-            Connect Google Calendar
+            {loading ? 'Connecting...' : 'Connect Google Calendar'}
         </button>
     );
 };
@@ -130,10 +138,22 @@ export const Calendar: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const { isGoogleCalendarConnected, isGoogleSyncing, refreshCalendarNow, lastCalendarSyncAt } = useAuth();
+  const [initialSyncDone, setInitialSyncDone] = useState(false);
 
   useEffect(() => {
-    if(syncGoogleCalendarEvents) syncGoogleCalendarEvents();
-  }, []);
+    const doInitialSync = async () => {
+      if (syncGoogleCalendarEvents && !initialSyncDone) {
+        try {
+          await syncGoogleCalendarEvents();
+        } catch (error) {
+          console.error('Initial sync failed:', error);
+        } finally {
+          setInitialSyncDone(true);
+        }
+      }
+    };
+    doInitialSync();
+  }, [syncGoogleCalendarEvents, initialSyncDone]);
   
   const allEventsInMonth = useMemo(() => {
     return events.filter(event => {

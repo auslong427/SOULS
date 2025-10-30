@@ -75,7 +75,7 @@ cat > plasmic.json.tmp << EOF
   "wrapPagesWithGlobalContexts": true,
   "preserveJsImportExtensions": false,
   "cliVersion": "0.1.348",
-  "\$schema": "https://unpkg.com/@plasmicapp/cli@0.1.348/dist/plasmic.schema.json"
+  "$schema": "https://unpkg.com/@plasmicapp/cli@0.1.348/dist/plasmic.schema.json"
 }
 EOF
 

@@ -11,6 +11,7 @@ import { LoginPage } from './components/LoginPage';
 import { DevSettings } from './components/DevSettings';
 import { Dashboard } from './components/Dashboard';
 import { JournalPage } from './components/journal/JournalPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 export type Page = 'dashboard' | 'journal' | 'austin' | 'angie';
 
@@ -135,8 +136,10 @@ const AppContent: React.FC = () => {
 
 export default function App() {
     return (
-        <AuthProvider>
-            <AppContent />
-        </AuthProvider>
+        <ErrorBoundary>
+            <AuthProvider>
+                <AppContent />
+            </AuthProvider>
+        </ErrorBoundary>
     );
 }

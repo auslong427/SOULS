@@ -1,0 +1,55 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Build'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/soulsync:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/soulsync:latest'
+      - '--build-arg'
+      - 'VITE_GOOGLE_CLIENT_ID=${_VITE_GOOGLE_CLIENT_ID}'
+      - '--build-arg'
+      - 'VITE_GOOGLE_CALENDAR_ID=${_VITE_GOOGLE_CALENDAR_ID}'
+      - "./soulsync_-a-couple's-emotional-journal (1)_extracted/soulsync_-a-couple's-emotional-journal (1)"
+
+  # Push the image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/soulsync:$COMMIT_SHA'
+
+  # Push the latest tag
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push Latest'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/soulsync:latest'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'Deploy'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'soulsync'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/soulsync:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+
+images:
+  - 'gcr.io/$PROJECT_ID/soulsync:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/soulsync:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'N1_HIGHCPU_8'
+
+timeout: 1200s

@@ -8,6 +8,9 @@ echo "  Plasmic Integration Setup for SoulSync"
 echo "================================================"
 echo ""
 
+# Note: This is a Plasmic PUBLIC API token, designed to be safely committed to version control.
+# It only allows reading published designs and cannot modify your Plasmic project.
+# See: https://forum.plasmic.app/t/question-about-using-project-public-api-token/6143
 PROJECT_API_TOKEN="JxZwyCPnLLahkvdzIZMqa7x4ogrcTUdeZ7NId1tW5vc2gxcixZTU3VFObPUi64FuDYTBY9XStBTT1umBEBB8g"
 
 echo "Your Project API Token is already configured:"

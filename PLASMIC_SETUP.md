@@ -139,6 +139,21 @@ If you prefer runtime loading instead of codegen, you can use the Plasmic Loader
 - [CLI Usage](https://docs.plasmic.app/learn/cli/)
 - [plasmic.json Configuration](https://docs.plasmic.app/learn/plasmic-json/)
 
+## Security Note
+
+The Plasmic project API token included in this repository is a **public token** that is designed to be safely committed to version control. According to Plasmic's documentation:
+
+- ✅ **Safe to commit**: The token is intentionally public and used in front-end contexts
+- ✅ **Read-only**: It only allows reading published designs from your Plasmic project
+- ✅ **No modification rights**: It cannot modify, delete, or change your Plasmic project
+- ⚠️ **Visibility trade-off**: Anyone with the token and project ID can fetch your published designs
+
+This is by design to allow for workflow flexibility and public integrations. However, if you're working with sensitive or proprietary designs, consider the visibility implications.
+
+**Important**: Do NOT commit secret tokens used for the Plasmic Write API (enterprise feature). Those should be kept in environment variables.
+
+Reference: [Plasmic Forum - Public API Token Discussion](https://forum.plasmic.app/t/question-about-using-project-public-api-token/6143)
+
 ## Support
 
 If you need help, visit the [Plasmic Forum](https://forum.plasmic.app/) or check the [documentation](https://docs.plasmic.app/).

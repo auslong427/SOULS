@@ -15,6 +15,9 @@ export const PLASMIC = initPlasmicLoader({
       id: "YOUR_PROJECT_ID_HERE",
       
       // Your Project API Token (already configured)
+      // Note: This is a PUBLIC token designed to be safely committed to git.
+      // It only allows reading published designs and cannot modify your project.
+      // See: https://forum.plasmic.app/t/question-about-using-project-public-api-token/6143
       token: "JxZwyCPnLLahkvdzIZMqa7x4ogrcTUdeZ7NId1tW5vc2gxcixZTU3VFObPUi64FuDYTBY9XStBTT1umBEBB8g"
     }
   ],

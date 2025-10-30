@@ -636,6 +636,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [isGoogleCalendarConnected, gapiClient, syncGoogleCalendarEvents]);
 
+  // Periodic token validation and calendar sync
+  useEffect(() => {
+    if (!isGoogleCalendarConnected || !gapiClient || !gapiLoaded) return;
+
+    // Check token validity every 5 minutes
+    const intervalId = setInterval(() => {
+      const { token, isExpired } = getTokenFromStorage();
+      if (!token || isExpired) {
+        console.warn('Token expired during periodic check, disconnecting...');
+        setIsGoogleCalendarConnected(false);
+        clearTokenFromStorage();
+        alert('Your Google Calendar session has expired. Please reconnect.');
+      } else {
+        // Optionally sync calendar data periodically
+        syncGoogleCalendarEvents();
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => clearInterval(intervalId);
+  }, [isGoogleCalendarConnected, gapiClient, gapiLoaded, getTokenFromStorage, clearTokenFromStorage, syncGoogleCalendarEvents]);
+
+  // Check token validity when user returns to the tab
+  useEffect(() => {
+    if (!isGoogleCalendarConnected || !gapiClient || !gapiLoaded) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const { token, isExpired } = getTokenFromStorage();
+        if (!token || isExpired) {
+          console.warn('Token expired when returning to tab, disconnecting...');
+          setIsGoogleCalendarConnected(false);
+          clearTokenFromStorage();
+        } else {
+          // Refresh calendar when user returns
+          syncGoogleCalendarEvents();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [isGoogleCalendarConnected, gapiClient, gapiLoaded, getTokenFromStorage, clearTokenFromStorage, syncGoogleCalendarEvents]);
+
   const addTask = async (content: string, ownerName: 'Austin' | 'Angie' | 'Shared') => {
     if (!user || !gapiClient || !gapiLoaded || !isGoogleCalendarConnected) return;
 

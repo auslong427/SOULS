@@ -1,0 +1,7 @@
+{
+  "name": "SoulSync: A Couple's Emotional Journal",
+  "description": "A personal, emotionally intelligent app for couples that blends journaling, daily planning, and relationship growth. It uses AI to foster connection, gratitude, and presence through shared reflections, a daily planner, and real-time conversational support.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
